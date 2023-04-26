@@ -198,7 +198,7 @@ def compiled_regression(FARF_list, correlation="Spearman"):
         plt.xlabel(key)
     plt.tight_layout()
 
-    compiled_data = {'collected_regression':collected_regression,'collapsed_landsat':collapsed_landsat,'collapsed_ffp':collapsed_ffp,'yfit'=yfit}
+    compiled_data = {'collected_regression':collected_regression,'collapsed_landsat':collapsed_landsat,'collapsed_ffp':collapsed_ffp,'yfit':yfit}
 
     return fig1, fig2, compiled_data
 
