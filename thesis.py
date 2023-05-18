@@ -1,4 +1,4 @@
-def preprocess_maps(siteName,fluxmap_filename,L8_date):
+def preprocess_maps(siteName,fluxmap_filename,L8_date,ffp_datapath):
     """
     Map data preprocessing to create comparable datasets
     Step 1: Remove Landsat 8 data outside the flux footprint
@@ -11,6 +11,7 @@ def preprocess_maps(siteName,fluxmap_filename,L8_date):
             e.g. '202207017-202208017.csv'
         L8_date = Landsat 8 image date
             e.g. 20220523
+        ffp_datapath = path name to folder holding ffp outputs.
             
     Returns dict holding all step 1 & 2 processed data
     """
@@ -21,8 +22,9 @@ def preprocess_maps(siteName,fluxmap_filename,L8_date):
     import os
     # Loading paths and setup data
     from thesis_setup import thesis_setup
-    coordinates,L8_filename,workPath,figurePath,dataPath,L8Path,FluxMapPath,savePath = thesis_setup(siteName)
-    
+    coordinates,L8_filename,workPath,thesisPath,figurePath,dataPath,L8Path,FluxMapPath,savePath = thesis_setup(siteName)
+    FluxMapPath = ffp_datapath
+
     # Step 1: Remove Landsat 8 data outside the flux footprint
     os.chdir(L8Path)
     satdata = pd.read_csv(L8_filename,delimiter = ',',header = 1) # Loading L8 data
@@ -264,7 +266,7 @@ def save_cluster(data,save_folder):
 
     # Figure 2: Cluster plot
     fig2 = plot_thesis_dendrogram(fmap_x = data['matched_ffp']['xr'],fmap_y = data['matched_ffp']['yr'],fmap_flux = data['matched_ffp']['ch4'])
-    fig2.clf()
+    # fig2.clf()
 
     # Saving figures and data to save_folder path
     save_filename = f'{data["siteName"]}_FFP={data["run"][1]}_L8={str(data["run"][0])}'
@@ -369,7 +371,7 @@ def plot_thesis_dendrogram(fmap_x,fmap_y,fmap_flux):
 
 # -------------------------------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------------------------------
-def compiled_regression(FARF_list, correlation="Spearman"):
+def compiled_regression(FARF_list, dataPath, correlation="Spearman"):
     import numpy as np
     import pickle 
     from scipy import stats
@@ -386,7 +388,8 @@ def compiled_regression(FARF_list, correlation="Spearman"):
              'Young_FFP=202106007-202106021_L8=20210612',
              'Young_FFP=202107020-202108020_L8=20210808']
 
-            2) Correlation approach. Either "Spearman" or "Pearson". Default is set to "Spearman"
+            2) dataPath = folder path of saved data for compilation
+            3) Correlation approach. Either "Spearman" or "Pearson". Default is set to "Spearman"
 
     Outputs 2 figures:
         Fig 1) Subplot of each observation 
@@ -398,7 +401,6 @@ def compiled_regression(FARF_list, correlation="Spearman"):
     
     """
     # Folder that all .p datafiles are stored in
-    dataPath = '/Users/darianng/Documents/MSc_Geography/MSc Thesis/Data/Compilation'
 
     indices = ['NDWI','NDMI','NDVI','temp']
 
@@ -408,7 +410,7 @@ def compiled_regression(FARF_list, correlation="Spearman"):
     collapsed_regression = {'slope':[],'offset':[],'r_val':[],'p_val':[]}
 
     # Collapsing all runs into single analysis
-    collapsed_landsat = {'NDWI':[],'NDMI':[],'NDVI':[],'temp':[]}
+    collapsed_landsat = {'NDWI':[],'NDMI':[],'NDVI':[],'temp':[],'period':[]}
     collapsed_ffp = []
 
     # Storing all linear equation data:
@@ -421,12 +423,18 @@ def compiled_regression(FARF_list, correlation="Spearman"):
         os.chdir(dataPath)
         with open(f'{this_FARF}.p', 'rb') as fp:
             data = pickle.load(fp)
+        # collected_regression for aggregating observation-separated data
         collected_regression['period'].append(this_FARF)
-        collected_regression['landsat'].append(data['mean_clustered_landsat'])
-        collected_regression['ffp'].append(data['mean_clustered_ffp'])
-        collapsed_ffp.extend(data['mean_clustered_ffp'])
-        for key in collapsed_landsat.keys():
-            collapsed_landsat[key].extend(data['mean_clustered_landsat'][key])
+        collected_regression['landsat'].append(data['clustered_landsat'])
+        collected_regression['ffp'].append(data['clustered_ffp'])
+        collapsed_ffp.extend(data['clustered_ffp'])
+
+        # collapsed_landsat for all across-observation data joined together
+        for key in list(collapsed_landsat.keys())[:-1]: # Skipping the last key which is 'period'
+            collapsed_landsat[key].extend(data['clustered_landsat'][key])
+        # Giving each datapoint a date label.
+        this_period = [int(this_FARF.split('L8=')[-1])]*len(data['clustered_landsat']['NDVI']) # Arbitratily calling NDVI just to get the length
+        collapsed_landsat['period'].extend(this_period) 
     
     # Defining Spearman permutation test
     def statistic(x):  # permute only `x`
@@ -451,16 +459,16 @@ def compiled_regression(FARF_list, correlation="Spearman"):
             # Calculating correlation coefficients
             if correlation == 'Pearson':
                 r_val, p_val = stats.pearsonr(x,y)
-            if correlation == 'Spearman':
+            elif correlation == 'Spearman':
                 r_val, p_val = stats.spearmanr(x,y)
                 perm = stats.permutation_test((x,), statistic, permutation_type='pairings')
                 p_val = perm.pvalue
-            corr = f'r: {np.round(r_val,6)} \np-value: {np.round(perm.pvalue,4)}'
+            corr = f'r: {np.round(r_val,6)} \np-value: {np.round(p_val,4)}'
 
             plt.scatter(x,y,label=corr)
 
             plt.ylabel('CH4 flux\n[nmol/m$^2$/s]',fontsize = 14)
-            plt.xlabel(idx,fontsize = 16,fontweight='bold')
+            plt.xlabel(idx,fontsize = 16)
             plt.legend(loc='lower left', bbox_to_anchor=(1, 0.6))
 
             if kk%4==0: # Title only at the start of each row
@@ -484,7 +492,7 @@ def compiled_regression(FARF_list, correlation="Spearman"):
 
     # Plotting Figure 2: Compiled Regression
     fig2 = plt.figure(figsize=(24,4))
-    for idx,key in enumerate(collapsed_landsat.keys()):
+    for idx,key in enumerate(list(collapsed_landsat.keys())[:-1]):
         plt.subplot(1,4,idx+1)
 
         # Plot data
@@ -526,4 +534,45 @@ def compiled_regression(FARF_list, correlation="Spearman"):
 # -------------------------------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------------------------------
 
+def check_L8(site,L8_date,product='NDVI',pixelSize=100):
+    """
+    Plots raw L8 map exported from Google Earth Engine
+    Inputs:
+        site: 'Young', 'Hogg', 'US-Myb', or 'US-WPT'
+        L8_date: date of L8 image (e.g. 20210527)
+        product: remote sensing product to be plotted. Default set to NDVI
+        pixelSize: size of plotted pixel. Default set to 100.
+    Outputs:
+        Plot of L8 map.
+    """
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    from thesis_setup import thesis_setup
+    import os
+
+    # Importing paths
+    tower_coordinates,L8_filename,workPath,thesisPath,figurePath,dataPath,L8Path,FluxMapPath,savePath = thesis_setup(site)
+
+    # Loading L8 data
+    os.chdir(L8Path)
+    satdata = pd.read_csv(L8_filename,delimiter = ',',header = 1)
+
+    N = len(satdata['id'])
+
+    imageCollection = {'latitude':[],'longitude':[],'NDVI':[],'NDWI':[],'MNDWI_SW1':[],'MNDWI_SW2':[],'CELSIUS':[]}
+
+    for i in range(N):
+        id_date = satdata['id'][i][12:]
+        if id_date == str(L8_date):
+            for key in imageCollection.keys():
+                imageCollection[key].append(satdata[key][i])
+    plt.scatter(imageCollection['longitude'],imageCollection['latitude'],c=imageCollection[product],marker='s',s=pixelSize)
+    xzoom = -0.009
+    yzoom = -0.005
+    # plt.xlim([min(imageCollection['longitude'])-xzoom,max(imageCollection['longitude'])+xzoom])
+    # plt.ylim([min(imageCollection['latitude'])-yzoom,max(imageCollection['latitude'])+yzoom])
+    plt.axvline(tower_coordinates[0],c='k')
+    plt.axhline(tower_coordinates[1],c='k')
+    os.chdir(thesisPath)
 
